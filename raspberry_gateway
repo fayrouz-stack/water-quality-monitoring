@@ -1,0 +1,163 @@
+import paho.mqtt.client as mqtt
+import time
+import csv
+from datetime import datetime
+import json
+import firebase_admin
+from firebase_admin import credentials, db
+from firebase_admin.exceptions import FirebaseError
+import os
+
+# ========= CONFIGURATION =========
+MQTT_BROKER = "broker.hivemq.com"
+MQTT_PORT = 1883
+TOPICS = [
+    "water_quality/ph",
+    "water_quality/turbidity",
+    "water_quality/level",
+    "water_quality/all"
+]
+
+FIREBASE_CONFIG = {
+    "databaseURL": "https://middlewareiot-afe24-default-rtdb.firebaseio.com/",
+    "credential": credentials.Certificate("firebase-key.json")  # À adapter
+}
+
+CSV_FILE = "water_quality_data.csv"
+MAX_CSV_ROWS = 1000  # Rotation du fichier après 1000 entrées
+
+# ========= INITIALISATION =========
+current_data = {
+    "pH": None,
+    "turbidity": None,
+    "water_level": None,
+    "timestamp": None
+}
+
+# Initialisation Firebase
+try:
+    firebase_app = firebase_admin.initialize_app(
+        FIREBASE_CONFIG["credential"],
+        {'databaseURL': FIREBASE_CONFIG["databaseURL"]},
+        name='water_quality_app'
+    )
+    print("✓ Firebase initialisé")
+except Exception as e:
+    print(f"× Erreur Firebase: {e}")
+    firebase_app = None
+
+# ========= FONCTIONS PRINCIPALES =========
+def send_to_firebase(data):
+    """Tente d'envoyer à Firebase, sinon sauvegarde locale"""
+    if firebase_app is None:
+        print("→ Firebase non disponible, sauvegarde locale uniquement")
+        save_to_csv(data)
+        return
+    
+    try:
+        ref = db.reference('/water_quality', app=firebase_app)
+        new_ref = ref.push()
+        new_ref.set({
+            'pH': data["pH"],
+            'turbidity': data["turbidity"],
+            'water_level': data["water_level"],
+            'timestamp': datetime.now().isoformat()
+        })
+        print(f"✓ Données envoyées à Firebase (ID: {new_ref.key})")
+    except Exception as e:
+        print(f"× Erreur Firebase - Fallback local: {str(e)}")
+        save_to_csv(data)
+
+def save_to_csv(data):
+    """Sauvegarde locale avec rotation automatique"""
+    try:
+        # Vérifier si rotation nécessaire
+        if os.path.exists(CSV_FILE):
+            with open(CSV_FILE, 'r') as f:
+                row_count = sum(1 for _ in f)
+            if row_count >= MAX_CSV_ROWS:
+                archive_name = f"water_quality_archive_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
+                os.rename(CSV_FILE, archive_name)
+                print(f"→ Rotation du CSV: {archive_name}")
+
+        # Écriture des données
+        with open(CSV_FILE, 'a', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            if f.tell() == 0:
+                writer.writerow(["timestamp", "pH", "turbidity", "water_level"])
+            writer.writerow([
+                data["timestamp"],
+                data["pH"],
+                data["turbidity"],
+                data["water_level"]
+            ])
+        print("✓ Données sauvegardées localement")
+    except Exception as e:
+        print(f"×× Erreur critique CSV: {str(e)}")
+
+def on_connect(client, userdata, flags, reason_code, properties):
+    print(f"✓ Connecté MQTT (code: {reason_code})")
+    for topic in TOPICS:
+        client.subscribe(topic)
+        print(f"↪ Abonné à: {topic}")
+
+def on_message(client, userdata, msg):
+    global current_data
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    try:
+        payload = msg.payload.decode()
+        print(f"\n📩 Message [{timestamp}] {msg.topic}: {payload[:50]}...")
+
+        # Traitement des données
+        if msg.topic == "water_quality/all":
+            data = json.loads(payload)
+            current_data = {
+                "pH": float(data["pH"]),
+                "turbidity": float(data["turbidity"]),
+                "water_level": float(data["water_level"]),
+                "timestamp": timestamp
+            }
+        else:
+            key = msg.topic.split('/')[1]
+            current_data = {
+                **current_data,
+                key: float(payload),
+                "timestamp": timestamp
+            }
+
+        # Envoi des données
+        send_to_firebase(current_data)
+
+    except json.JSONDecodeError:
+        print("× Format JSON invalide")
+    except ValueError as e:
+        print(f"× Erreur conversion: {str(e)}")
+    except Exception as e:
+        print(f"×× Erreur inattendue: {str(e)}")
+
+# ========= POINT D'ENTRÉE =========
+def main():
+    print("\n" + "="*50)
+    print("  SYSTÈME DE SURVEILLANCE DE LA QUALITÉ DE L'EAU")
+    print("="*50)
+    print(f"• Firebase: {'activé' if firebase_app else 'désactivé'}")
+    print(f"• Backup CSV: activé (rotation à {MAX_CSV_ROWS} lignes)")
+    print(f"• Topics MQTT: {', '.join(TOPICS)}")
+    print("="*50 + "\n")
+
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, "WaterQualitySubscriber")
+    client.on_connect = on_connect
+    client.on_message = on_message
+
+    try:
+        client.connect(MQTT_BROKER, MQTT_PORT, 60)
+        client.loop_forever()
+    except KeyboardInterrupt:
+        print("\nArrêt propre du programme...")
+        client.disconnect()
+    except Exception as e:
+        print(f"×× ERREUR MQTT: {str(e)}")
+
+if __name__ == "__main__":
+    main()
