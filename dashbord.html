@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard IoT - Qualité de l'Eau</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
+  <style>
+    :root {
+      --primary: #00B8D9;
+      --danger: #FF4757;
+      --warning: #FFA502;
+      --success: #2ED573;
+      --text: #333;
+      --bg: #f0f4f8;
+      --card-bg: #ffffff;
+      --sidebar-width: 220px;
+      --header-height: 70px;
+    }
+    
+    .dark-mode {
+      --text: #f0f0f0;
+      --bg: #1a1a1a;
+      --card-bg: #2d2d2d;
+    }
+    
+    * { 
+      box-sizing: border-box; 
+      font-family: 'Segoe UI', sans-serif; 
+    }
+    
+    body { 
+      margin: 0;
+      padding-left: var(--sidebar-width);
+      background-color: var(--bg); 
+      color: var(--text);
+      transition: background 0.3s, color 0.3s;
+    }
+    
+    header {
+      position: fixed;
+      top: 0;
+      left: var(--sidebar-width);
+      right: 0;
+      height: var(--header-height);
+      background-color: var(--primary); 
+      color: white;
+      padding: 0 2em;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 1000;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    
+    .sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      width: var(--sidebar-width);
+      background-color: #2C3E50;
+      color: white;
+      padding-top: var(--header-height);
+      display: flex;
+      flex-direction: column;
+      z-index: 1001;
+    }
+    
+    .sidebar a {
+      display: flex;
+      align-items: center;
+      padding: 15px 20px;
+      color: #ECF0F1;
+      text-decoration: none;
+      transition: background 0.2s;
+    }
+    
+    .sidebar a:hover {
+      background: #34495E;
+    }
+    
+    .sidebar .icon {
+      font-size: 1.2rem;
+      margin-right: 10px;
+    }
+    
+    .sidebar a.active {
+      background: #34495E;
+      border-left: 3px solid var(--primary);
+    }
+    
+    main {
+      margin-top: var(--header-height);
+      padding: 2em;
+    }
+    
+    .cards {
+      display: grid; 
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); 
+      gap: 1.5em; 
+      margin-bottom: 2em;
+    }
+    
+    .card {
+      background: var(--card-bg);
+      border-radius: 8px;
+      padding: 1.5em;
+      box-shadow: 0 3px 10px rgba(0,0,0,0.1);
+      position: relative;
+      overflow: hidden;
+      transition: transform 0.3s;
+    }
+    
+    .card:hover {
+      transform: translateY(-5px);
+    }
+    
+    .card::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 8px;
+      height: 100%;
+      background: var(--success);
+      transition: background 0.3s;
+    }
+    
+    .card.alert::after {
+      background: var(--danger);
+    }
+    
+    .card.warning::after {
+      background: var(--warning);
+    }
+    
+    .card-icon {
+      font-size: 2rem;
+      margin-bottom: 0.5em;
+    }
+    
+    .card-title {
+      font-size: 1rem;
+      color: #666;
+      margin-bottom: 0.5em;
+    }
+    
+    .card-value {
+      font-size: 1.8rem;
+      font-weight: bold;
+      margin-bottom: 0.3em;
+    }
+    
+    .card-threshold {
+      font-size: 0.9rem;
+      color: #777;
+    }
+    
+    .chart-container {
+      width: 100%;
+      height: 400px;
+      margin-top: 1em;
+      background: var(--card-bg);
+      border-radius: 8px;
+      padding: 1em;
+      box-shadow: 0 3px 10px rgba(0,0,0,0.1);
+    }
+    
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 1em;
+      background: var(--card-bg);
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 3px 10px rgba(0,0,0,0.1);
+    }
+    
+    th, td {
+      padding: 12px 15px;
+      text-align: left;
+      border-bottom: 1px solid #ddd;
+    }
+    
+    th {
+      background-color: var(--primary);
+      color: white;
+      cursor: pointer;
+    }
+    
+    tr:hover {
+      background-color: rgba(0, 184, 217, 0.1);
+    }
+    
+    .controls {
+      display: flex;
+      gap: 2em;
+      flex-wrap: wrap;
+      margin-top: 1em;
+      background: var(--card-bg);
+      padding: 1.5em;
+      border-radius: 8px;
+      box-shadow: 0 3px 10px rgba(0,0,0,0.1);
+    }
+    
+    .control-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 15px;
+      background: rgba(0,0,0,0.05);
+      border-radius: 8px;
+    }
+    
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 60px;
+      height: 34px;
+    }
+    
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #ccc;
+      transition: .4s;
+      border-radius: 34px;
+    }
+    
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 26px;
+      width: 26px;
+      left: 4px;
+      bottom: 4px;
+      background-color: white;
+      transition: .4s;
+      border-radius: 50%;
+    }
+    
+    input:checked + .slider {
+      background-color: var(--success);
+    }
+    
+    input:checked + .slider:before {
+      transform: translateX(26px);
+    }
+    
+    .status {
+      margin-left: auto;
+      font-weight: bold;
+      padding: 5px 10px;
+      border-radius: 5px;
+    }
+    
+    .status.off {
+      background-color: var(--danger);
+      color: white;
+    }
+    
+    .status.on {
+      background-color: var(--success);
+      color: white;
+    }
+    
+    @media (max-width: 768px) {
+      body {
+        padding-left: 0;
+      }
+      
+      .sidebar {
+        width: 100%;
+        height: auto;
+        bottom: 0;
+        top: auto;
+        flex-direction: row;
+        padding-top: 0;
+      }
+      
+      .sidebar a {
+        flex-direction: column;
+        padding: 0.5em;
+        font-size: 0.8em;
+      }
+      
+      header {
+        left: 0;
+      }
+      
+      main {
+        margin-bottom: 60px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <nav class="sidebar">
+    <a href="#dashboard" class="active">
+      <span class="icon">📊</span>
+      <span class="text">Dashboard</span>
+    </a>
+    <a href="#controls">
+      <span class="icon">⚙️</span>
+      <span class="text">Contrôles</span>
+    </a>
+    <a href="#history">
+      <span class="icon">📜</span>
+      <span class="text">Historique</span>
+    </a>
+  </nav>
+  
+  <header>
+    <h1>💧 Système IoT de Surveillance de la Qualité de l'Eau</h1>
+    <button id="themeToggle">🌓 Mode Sombre</button>
+  </header>
+  
+  <main>
+    <section id="dashboard">
+      <h2>Tableau de Bord Temps Réel</h2>
+      <div class="cards">
+        <div class="card" id="cardPh">
+          <div class="card-icon">🧪</div>
+          <div class="card-title">NIVEAU DE pH</div>
+          <div class="card-value">--</div>
+          <div class="card-threshold">Normal: 6.5 - 8.5</div>
+        </div>
+        <div class="card" id="cardTurb">
+          <div class="card-icon">🌊</div>
+          <div class="card-title">TURBIDITÉ</div>
+          <div class="card-value">-- NTU</div>
+          <div class="card-threshold">Seuil max: 50 NTU</div>
+        </div>
+        <div class="card" id="cardLevel">
+          <div class="card-icon">💧</div>
+          <div class="card-title">NIVEAU D'EAU</div>
+          <div class="card-value">-- cm</div>
+          <div class="card-threshold">Seuil min: 10 cm</div>
+        </div>
+      </div>
+
+      <div class="chart-container">
+        <canvas id="chartAll"></canvas>
+      </div>
+    </section>
+
+    <section id="controls">
+      <h2>Contrôle des Actionneurs</h2>
+      <div class="controls">
+        <div class="control-item">
+          <span>POMPE</span>
+          <label class="switch">
+            <input type="checkbox" id="switchPompe">
+            <span class="slider"></span>
+          </label>
+          <span id="pompeStatus" class="status off">OFF</span>
+        </div>
+        <div class="control-item">
+          <span>VANNE</span>
+          <label class="switch">
+            <input type="checkbox" id="switchVanne">
+            <span class="slider"></span>
+          </label>
+          <span id="vanneStatus" class="status off">OFF</span>
+        </div>
+      </div>
+    </section>
+
+    <section id="history">
+      <h2>Historique des Mesures</h2>
+      <div style="overflow-x: auto;">
+        <table>
+          <thead>
+            <tr>
+              <th onclick="sortTable(0)">Heure ▲▼</th>
+              <th onclick="sortTable(1)">pH ▲▼</th>
+              <th onclick="sortTable(2)">Turbidité ▲▼</th>
+              <th onclick="sortTable(3)">Niveau ▲▼</th>
+            </tr>
+          </thead>
+          <tbody id="historyTable">
+            <!-- Rempli dynamiquement -->
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+<script>
+// Configuration Firebase
+const firebaseConfig = {
+  apiKey: "AIzaSyBDgOfMTFz6cGPJYxEs8PLnvyAqqSxLqwk",
+  authDomain: "middlewareiot-afe24.firebaseapp.com",
+  databaseURL: "https://middlewareiot-afe24-default-rtdb.firebaseio.com",
+  projectId: "middlewareiot-afe24",
+  storageBucket: "middlewareiot-afe24.appspot.com",
+  messagingSenderId: "956894170536",
+  appId: "1:956894170536:web:5a1c5c0c8b1e1a5d8a0f9a"
+};
+
+// Initialisation Firebase
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+// Variables pour le graphique
+const chartLabels = [];
+const phData = [];
+const turbData = [];
+const levelData = [];
+
+// Initialisation du graphique
+const ctx = document.getElementById('chartAll').getContext('2d');
+const chart = new Chart(ctx, {
+  type: 'line',
+  data: {
+    labels: chartLabels,
+    datasets: [
+      {
+        label: 'pH',
+        data: phData,
+        borderColor: '#7E57C2',
+        backgroundColor: '#7E57C233',
+        borderWidth: 2,
+        tension: 0.1,
+        yAxisID: 'y'
+      },
+      {
+        label: 'Turbidité (NTU)',
+        data: turbData,
+        borderColor: '#FBC02D',
+        backgroundColor: '#FBC02D33',
+        borderWidth: 2,
+        tension: 0.1,
+        yAxisID: 'y1'
+      },
+      {
+        label: "Niveau d'eau (cm)",
+        data: levelData,
+        borderColor: '#42A5F5',
+        backgroundColor: '#42A5F533',
+        borderWidth: 2,
+        tension: 0.1,
+        yAxisID: 'y1'
+      }
+    ]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { 
+        position: 'top',
+        labels: {
+          color: 'var(--text)'
+        }
+      },
+      zoom: {
+        zoom: {
+          wheel: { enabled: true },
+          pinch: { enabled: true },
+          mode: 'xy'
+        },
+        pan: {
+          enabled: true,
+          mode: 'xy'
+        }
+      },
+      tooltip: {
+        mode: 'index',
+        intersect: false
+      }
+    },
+    scales: {
+      x: { 
+        grid: { 
+          color: 'rgba(0,0,0,0.1)'
+        },
+        ticks: {
+          color: 'var(--text)'
+        }
+      },
+      y: { 
+        beginAtZero: false,
+        position: 'left',
+        grid: {
+          color: 'rgba(0,0,0,0.1)'
+        },
+        ticks: {
+          color: 'var(--text)'
+        }
+      },
+      y1: {
+        beginAtZero: true,
+        position: 'right',
+        grid: {
+          drawOnChartArea: false,
+          color: 'rgba(0,0,0,0.1)'
+        },
+        ticks: {
+          color: 'var(--text)'
+        }
+      }
+    }
+  }
+});
+
+// Écoute des données de qualité d'eau
+db.ref('water_quality').limitToLast(1).on('child_added', snapshot => {
+  const data = snapshot.val();
+  if (data) {
+    updateDashboard({
+      pH: parseFloat(data.pH) || 0,
+      turbidity: parseFloat(data.turbidity) || 0,
+      water_level: parseFloat(data.water_level) || 0,
+      timestamp: data.timestamp || new Date().toISOString()
+    });
+  }
+});
+
+// Fonction principale de mise à jour
+function updateDashboard(data) {
+  updateCards(data);
+  updateChart(data);
+  updateHistoryTable(data);
+  checkAlerts(data);
+}
+
+function updateCards(data) {
+  document.getElementById('cardPh').querySelector('.card-value').textContent = data.pH.toFixed(2);
+  document.getElementById('cardTurb').querySelector('.card-value').textContent = data.turbidity.toFixed(2) + ' NTU';
+  document.getElementById('cardLevel').querySelector('.card-value').textContent = data.water_level.toFixed(2) + ' cm';
+}
+
+function updateChart(data) {
+  const now = new Date(data.timestamp || Date.now());
+  const timeString = now.toLocaleTimeString();
+  
+  chartLabels.push(timeString);
+  phData.push(data.pH);
+  turbData.push(data.turbidity);
+  levelData.push(data.water_level);
+  
+  // Garder seulement les 20 dernières valeurs
+  if (chartLabels.length > 20) {
+    chartLabels.shift();
+    phData.shift();
+    turbData.shift();
+    levelData.shift();
+  }
+  
+  chart.update();
+}
+
+function updateHistoryTable(data) {
+  const table = document.getElementById('historyTable');
+  const row = document.createElement('tr');
+  
+  const date = new Date(data.timestamp || Date.now());
+  const timeString = date.toLocaleTimeString();
+  
+  row.innerHTML = `
+    <td>${timeString}</td>
+    <td>${data.pH.toFixed(2)}</td>
+    <td>${data.turbidity.toFixed(2)}</td>
+    <td>${data.water_level.toFixed(2)}</td>
+  `;
+  
+  table.insertBefore(row, table.firstChild);
+  
+  // Limiter à 50 entrées
+  if (table.rows.length > 50) {
+    table.deleteRow(50);
+  }
+}
+
+function checkAlerts(data) {
+  const phCard = document.getElementById('cardPh');
+  const turbCard = document.getElementById('cardTurb');
+  const levelCard = document.getElementById('cardLevel');
+  
+  // Réinitialiser les états
+  [phCard, turbCard, levelCard].forEach(card => {
+    card.classList.remove('alert', 'warning');
+  });
+  
+  // Seuils (adaptez selon vos besoins)
+  const PH_MAX = 8.5;
+  const PH_MIN = 6.5;
+  const TURB_MAX = 50;
+  const LEVEL_MIN = 10; // en cm
+  
+  // Vérification des alertes
+  if (data.pH > PH_MAX || data.pH < PH_MIN) {
+    phCard.classList.add('alert');
+  } else if (data.pH > PH_MAX * 0.9 || data.pH < PH_MIN * 1.1) {
+    phCard.classList.add('warning');
+  }
+  
+  if (data.turbidity > TURB_MAX) {
+    turbCard.classList.add('alert');
+  } else if (data.turbidity > TURB_MAX * 0.8) {
+    turbCard.classList.add('warning');
+  }
+  
+  if (data.water_level < LEVEL_MIN) {
+    levelCard.classList.add('alert');
+  } else if (data.water_level < LEVEL_MIN * 1.5) {
+    levelCard.classList.add('warning');
+  }
+}
+
+// Gestion du mode sombre
+document.getElementById('themeToggle').addEventListener('click', () => {
+  document.body.classList.toggle('dark-mode');
+  // Mettre à jour les couleurs du graphique
+  chart.options.plugins.legend.labels.color = getComputedStyle(document.body).getPropertyValue('--text');
+  chart.options.scales.x.ticks.color = getComputedStyle(document.body).getPropertyValue('--text');
+  chart.options.scales.y.ticks.color = getComputedStyle(document.body).getPropertyValue('--text');
+  chart.options.scales.y1.ticks.color = getComputedStyle(document.body).getPropertyValue('--text');
+  chart.update();
+});
+
+// Gestion des actionneurs
+let etats = { pompe: false, vanne: false };
+
+function toggleActuator(type) {
+  etats[type] = !etats[type];
+  updateActuatorUI(type);
+  
+  // Envoyer la commande à Firebase
+  db.ref(`actuators/${type}`).set(etats[type]);
+}
+
+function updateActuatorUI(type) {
+  const statusElement = document.getElementById(`${type}Status`);
+  const switchElement = document.getElementById(`switch${type.charAt(0).toUpperCase() + type.slice(1)}`);
+  
+  statusElement.textContent = etats[type] ? 'ON' : 'OFF';
+  statusElement.className = `status ${etats[type] ? 'on' : 'off'}`;
+  switchElement.checked = etats[type];
+}
+
+// Écoute des changements d'état des actionneurs
+db.ref('actuators').on('value', snapshot => {
+  const data = snapshot.val();
+  if (data) {
+    etats.pompe = data.pompe || false;
+    etats.vanne = data.vanne || false;
+    
+    updateActuatorUI('pompe');
+    updateActuatorUI('vanne');
+  }
+});
+
+// Événements pour les switches
+document.getElementById('switchPompe').addEventListener('change', () => toggleActuator('pompe'));
+document.getElementById('switchVanne').addEventListener('change', () => toggleActuator('vanne'));
+
+// Tri du tableau
+function sortTable(columnIndex) {
+  const table = document.getElementById('historyTable');
+  const rows = Array.from(table.rows);
+  const isAsc = table.getAttribute('data-sort') === `${columnIndex}-asc`;
+  
+  rows.sort((a, b) => {
+    const aVal = a.cells[columnIndex].textContent;
+    const bVal = b.cells[columnIndex].textContent;
+    
+    // Pour les colonnes numériques
+    if (columnIndex > 0) {
+      const numA = parseFloat(aVal);
+      const numB = parseFloat(bVal);
+      return isAsc ? numB - numA : numA - numB;
+    }
+    // Pour la colonne de temps
+    return isAsc ? bVal.localeCompare(aVal) : aVal.localeCompare(bVal);
+  });
+  
+  // Réappliquer les lignes triées
+  rows.forEach(row => table.appendChild(row));
+  
+  // Mettre à jour l'état du tri
+  table.setAttribute('data-sort', isAsc ? `${columnIndex}-desc` : `${columnIndex}-asc`);
+}
+
+// Charger les dernières données au démarrage
+window.addEventListener('load', () => {
+  db.ref('water_quality').limitToLast(20).once('value', snapshot => {
+    snapshot.forEach(childSnapshot => {
+      const data = childSnapshot.val();
+      if (data) {
+        updateChart({
+          pH: parseFloat(data.pH) || 0,
+          turbidity: parseFloat(data.turbidity) || 0,
+          water_level: parseFloat(data.water_level) || 0,
+          timestamp: data.timestamp
+        });
+      }
+    });
+  });
+});
+</script>
+</body>
+</html>
